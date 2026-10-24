@@ -4,6 +4,7 @@
 - Speech engine: Soniox real-time WebSocket API. `src/SonioxClient.cs` must stay free of UI code, so it can be reused in other projects.
 - Read `README.md` for features and the file list. `research.md` has the earlier research (why streaming, which providers).
 - Build: `powershell -ExecutionPolicy Bypass -File build.ps1` → `dist\STT.exe`. The script stops the running `dist\STT.exe` first; start it again after the build.
+- Auto start: line `00:03:40,E:\www\STT\dist\STT.exe` in `E:\appServices\DelayedTaskRunnerHome\DelayedTaskRunner.txt` (added 2026-10-24). So the app runs from `dist\`.
 - Test the API connection: `dist\STT.exe --test` → result in `%APPDATA%\STT\stt.log`.
 - Soniox API key is in Bitwarden, folder `AI Providers`, item `Soniox`. Use `bwprx-client run ... -- STT.exe --save-key`, never print the key.
 - Desktop app rules apply: single instance, centered windows, tray menu with Exit last, clean close on WM_CLOSE (hidden `STT host` window).
