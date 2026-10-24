@@ -78,6 +78,8 @@ namespace STT
             var ok = new Button { Text = "Save", DialogResult = DialogResult.None, AutoSize = true };
             var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
             ok.Click += (s, e) => SaveAndClose();
+            // The form is shown modeless, so DialogResult alone does not close it.
+            cancel.Click += (s, e) => Close();
             AcceptButton = ok;
             CancelButton = cancel;
             var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill };
