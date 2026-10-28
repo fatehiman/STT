@@ -16,6 +16,7 @@ namespace STT
         readonly TextBox terms = new TextBox { Width = 320 };
         readonly ComboBox mic = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320 };
         readonly NumericUpDown autoStop = new NumericUpDown { Minimum = 0, Maximum = 3600, Width = 80 };
+        readonly NumericUpDown sentencePause = new NumericUpDown { Minimum = 0, Maximum = 60, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
         readonly CheckBox typePartial = new CheckBox { Text = "Type words while I speak (they may be corrected)", AutoSize = true };
         readonly CheckBox sounds = new CheckBox { Text = "Play a short sound on start and stop", AutoSize = true };
         readonly Label error = new Label { ForeColor = Color.Firebrick, AutoSize = true, MaximumSize = new Size(440, 0) };
@@ -49,6 +50,7 @@ namespace STT
             languages.Text = settings.LanguageHints;
             terms.Text = settings.Terms;
             autoStop.Value = Math.Max(0, Math.Min(3600, settings.AutoStopSeconds));
+            sentencePause.Value = (decimal)Math.Max(0, Math.Min(60, settings.SentencePauseSeconds));
             typePartial.Checked = settings.TypePartial;
             sounds.Checked = settings.PlaySounds;
 
@@ -67,10 +69,8 @@ namespace STT
             Row(grid, "Languages:", languages, "Language codes, for example: en, fa");
             Row(grid, "Custom words:", terms, "Names or technical words, comma separated (optional)");
             Row(grid, "Microphone:", mic, null);
-            var stopRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty, WrapContents = false };
-            stopRow.Controls.Add(autoStop);
-            stopRow.Controls.Add(new Label { Text = "seconds without speech (0 = never)", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 6, 0, 0) });
-            Row(grid, "Auto stop after:", stopRow, null);
+            Row(grid, "End sentence after:", Inline(sentencePause, "seconds of pause (0 = Soniox decides, about 2 s)"), null);
+            Row(grid, "Auto stop after:", Inline(autoStop, "seconds without speech (0 = never)"), null);
             Row(grid, "", typePartial, null);
             Row(grid, "", sounds, null);
             Row(grid, "", error, null);
@@ -89,6 +89,14 @@ namespace STT
             grid.SetColumnSpan(buttons, 2);
 
             Controls.Add(grid);
+        }
+
+        static Control Inline(Control control, string text)
+        {
+            var row = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty, WrapContents = false };
+            row.Controls.Add(control);
+            row.Controls.Add(new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 6, 0, 0) });
+            return row;
         }
 
         static void Row(TableLayoutPanel grid, string label, Control control, string hint)
@@ -127,6 +135,7 @@ namespace STT
             settings.Terms = terms.Text.Trim();
             settings.Microphone = mic.SelectedIndex <= 0 ? "" : (string)mic.SelectedItem;
             settings.AutoStopSeconds = (int)autoStop.Value;
+            settings.SentencePauseSeconds = (double)sentencePause.Value;
             settings.TypePartial = typePartial.Checked;
             settings.PlaySounds = sounds.Checked;
             settings.Save();

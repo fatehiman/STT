@@ -25,6 +25,8 @@ namespace STT
         public bool EnableSpeakerDiarization;
         public bool EnableLanguageIdentification;
         public bool EnableEndpointDetection = true;
+        // Upper limit for the endpoint delay, 500..3000 ms. 0 = server default (2000).
+        public int MaxEndpointDelayMs;
         // Words the model should know (names, technical terms). Sent as context.terms.
         public string[] Terms;
         // Free text that describes the topic. Sent as context.general.
@@ -45,6 +47,8 @@ namespace STT
             sb.Append(",\"enable_speaker_diarization\":").Append(EnableSpeakerDiarization ? "true" : "false");
             sb.Append(",\"enable_language_identification\":").Append(EnableLanguageIdentification ? "true" : "false");
             sb.Append(",\"enable_endpoint_detection\":").Append(EnableEndpointDetection ? "true" : "false");
+            if (EnableEndpointDetection && MaxEndpointDelayMs > 0)
+                sb.Append(",\"max_endpoint_delay_ms\":").Append(Math.Max(500, Math.Min(3000, MaxEndpointDelayMs)));
             bool hasTerms = Terms != null && Terms.Length > 0;
             if (hasTerms || !string.IsNullOrEmpty(ContextText))
             {
@@ -137,6 +141,28 @@ namespace STT
         readonly CancellationTokenSource cts = new CancellationTokenSource();
         int done; // 1 after Finished or Failed was raised
 
+        // Pause tracking (written by the receive loop, read by the send loop).
+        long lastSpeechTicks = DateTime.UtcNow.Ticks;
+        string lastText = ""; // non-final text of the last response
+        long lastWordEndMs;   // audio time where the last heard word ends
+        long silenceMs;       // processed audio after the last word
+        volatile bool hasNonFinal;
+        volatile bool pauseFinalized;
+
+        /// <summary>
+        /// Sends "finalize" after this many ms of silence in the audio (0 = off).
+        /// The pause is measured in audio time (token end_ms vs total_audio_proc_ms), so server lag does not matter.
+        /// Use it with EnableEndpointDetection = false to decide yourself how long a pause ends a sentence
+        /// (Soniox's own endpoint delay is at most 3 s).
+        /// </summary>
+        public int FinalizeAfterPauseMs;
+
+        /// <summary>Time of the last new or changed word (UTC).</summary>
+        public DateTime LastSpeechUtc => new DateTime(Interlocked.Read(ref lastSpeechTicks), DateTimeKind.Utc);
+
+        /// <summary>Processed audio (ms) after the end of the last word.</summary>
+        public long SilenceMs => Interlocked.Read(ref silenceMs);
+
         public event Action<SonioxResponse> Response;
         public event Action Finished;
         public event Action<string> Failed;
@@ -186,15 +212,28 @@ namespace STT
 
         async Task SendLoop()
         {
+            var lastSend = DateTime.UtcNow;
             try
             {
                 while (!cts.IsCancellationRequested)
                 {
-                    // Soniox closes the connection after 40 s with no message, so send keepalives when idle.
-                    if (!queue.TryTake(out var item, 10000, cts.Token))
+                    if (FinalizeAfterPauseMs > 0 && hasNonFinal && !pauseFinalized &&
+                        SilenceMs >= FinalizeAfterPauseMs)
+                    {
+                        pauseFinalized = true;
+                        await ws.SendAsync(new ArraySegment<byte>(FinalizeMsg), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
+                    }
+
+                    Outgoing item;
+                    if (!queue.TryTake(out item, 200, cts.Token))
+                    {
+                        // Soniox closes the connection after 40 s with no message, so send keepalives when idle.
+                        if ((DateTime.UtcNow - lastSend).TotalSeconds < 10) continue;
                         item = new Outgoing { Data = KeepAlive, Text = true };
+                    }
                     var type = item.Text ? WebSocketMessageType.Text : WebSocketMessageType.Binary;
                     await ws.SendAsync(new ArraySegment<byte>(item.Data), type, true, cts.Token).ConfigureAwait(false);
+                    lastSend = DateTime.UtcNow;
                     if (item.End)
                     {
                         queue.CompleteAdding();
@@ -237,6 +276,7 @@ namespace STT
                         Fail(resp.ErrorCode + " " + resp.ErrorType + ": " + resp.ErrorMessage);
                         return;
                     }
+                    TrackSpeech(resp);
                     Response?.Invoke(resp);
                     if (resp.Finished)
                     {
@@ -250,6 +290,31 @@ namespace STT
                 Fail("receive failed: " + ex.Message);
             }
             catch { }
+        }
+
+        // New speech = the text changed. When non-final words only become final, the text stays the same.
+        void TrackSpeech(SonioxResponse resp)
+        {
+            if (resp.Tokens == null) return;
+            var fin = new StringBuilder();
+            var non = new StringBuilder();
+            foreach (var t in resp.Tokens)
+            {
+                if (t.IsControl || string.IsNullOrEmpty(t.Text)) continue;
+                (t.IsFinal ? fin : non).Append(t.Text);
+                if (t.Text.Trim().Length > 0 && t.EndMs > lastWordEndMs)
+                {
+                    lastWordEndMs = t.EndMs;
+                    pauseFinalized = false;
+                }
+            }
+            string nonText = non.ToString();
+            string text = fin + nonText;
+            if (text.Length > 0 && text != lastText)
+                Interlocked.Exchange(ref lastSpeechTicks, DateTime.UtcNow.Ticks);
+            Interlocked.Exchange(ref silenceMs, Math.Max(0, resp.TotalAudioProcMs - lastWordEndMs));
+            lastText = nonText;
+            hasNonFinal = nonText.Trim().Length > 0;
         }
 
         void Fail(string message)

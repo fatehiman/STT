@@ -25,6 +25,8 @@ namespace STT
         [DataMember] public string Microphone;
         [DataMember] public bool TypePartial;
         [DataMember] public int AutoStopSeconds;
+        // A pause this long ends the sentence (the app sends "finalize"). 0 = Soniox decides (endpoint detection).
+        [DataMember] public double SentencePauseSeconds;
         [DataMember] public bool PlaySounds;
 
         public Settings() { SetDefaults(); }
@@ -43,6 +45,7 @@ namespace STT
             Microphone = "";
             TypePartial = true;
             AutoStopSeconds = 30;
+            SentencePauseSeconds = 6;
             PlaySounds = true;
         }
 
@@ -102,8 +105,11 @@ namespace STT
                 Model = string.IsNullOrWhiteSpace(Model) ? "stt-rt-v5" : Model.Trim(),
                 LanguageHints = SplitList(LanguageHints),
                 Terms = SplitList(Terms),
+                EnableEndpointDetection = SentencePauseSeconds <= 0,
             };
         }
+
+        public int SentencePauseMs => SentencePauseSeconds <= 0 ? 0 : (int)(SentencePauseSeconds * 1000);
 
         static string[] SplitList(string s)
         {

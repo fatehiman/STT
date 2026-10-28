@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Timer = System.Windows.Forms.Timer;
@@ -26,7 +25,7 @@ namespace STT
         State state = State.Idle;
         SonioxClient client;
         MicRecorder mic;
-        DateTime lastSpeech;
+        SentencePauseFilter filter;
         SettingsForm settingsForm;
 
         public TrayApp()
@@ -101,9 +100,9 @@ namespace STT
             UpdateUi();
             if (settings.PlaySounds) Sounds.Start();
             typer.Begin(settings.TypePartial);
-            lastSpeech = DateTime.Now;
+            filter = new SentencePauseFilter(settings.SentencePauseMs);
 
-            var c = new SonioxClient();
+            var c = new SonioxClient { FinalizeAfterPauseMs = settings.SentencePauseMs };
             client = c;
             c.Response += r => Post(() => OnResponse(c, r));
             c.Finished += () => Post(() => OnFinished(c));
@@ -161,21 +160,14 @@ namespace STT
         void OnResponse(SonioxClient c, SonioxResponse r)
         {
             if (c != client || r.Tokens == null) return;
-            var fin = new StringBuilder();
-            var non = new StringBuilder();
-            foreach (var t in r.Tokens)
-            {
-                if (t.IsControl || string.IsNullOrEmpty(t.Text)) continue;
-                (t.IsFinal ? fin : non).Append(t.Text);
-            }
-            if (fin.Length > 0 || non.Length > 0) lastSpeech = DateTime.Now;
-            typer.Add(fin.ToString(), non.ToString());
+            filter.Process(r, out string fin, out string nonFinal);
+            typer.Add(fin, nonFinal);
         }
 
         void OnFinished(SonioxClient c)
         {
             if (c != client) return;
-            typer.Add("", ""); // removes any non-final words that were never confirmed
+            typer.Add(filter.Flush(), ""); // also removes non-final words that were never confirmed
             Log.Write("session finished");
             Cleanup();
         }
@@ -192,7 +184,7 @@ namespace STT
         void CheckAutoStop()
         {
             if (state == State.Listening && settings.AutoStopSeconds > 0 &&
-                (DateTime.Now - lastSpeech).TotalSeconds >= settings.AutoStopSeconds)
+                (DateTime.UtcNow - client.LastSpeechUtc).TotalSeconds >= settings.AutoStopSeconds)
             {
                 Log.Write("auto stop: no speech for " + settings.AutoStopSeconds + " s");
                 Stop();
